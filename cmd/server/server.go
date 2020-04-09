@@ -44,7 +44,7 @@ func main() {
 
 	resultVectorString := ""
 	for i := 0; i < m; i++ {
-		resultVectorString += fmt.Sprintf("%d", resultVector[i])
+		resultVectorString += fmt.Sprintf("%d\n", resultVector[i])
 	}
 
 	if err = ioutil.WriteFile(resultPath, []byte(resultVectorString), 0644); err != nil {

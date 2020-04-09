@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	workerPath = `bin/Worker`
+	workerPath = `bin/worker`
 )
 
 type Worker struct {
@@ -30,10 +30,13 @@ func CalculateMultiplyByWorker(matrix [][]int, vector []int, line, n, m int, cur
 			log.Fatal("Failed to handle worker: ", err)
 		}
 	}()
-	cmd := exec.Command("sh", fmt.Sprintf(`%s/%s "%s"`, currDir, workerPath, addr))
+	cmd := exec.Command(fmt.Sprintf(`%s/%s`, currDir, workerPath), addr)
 
 	resultBytes, err := cmd.Output()
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return 0, fmt.Errorf("error from worker: %s", exitErr.Stderr)
+		}
 		return 0, errors.New("failed to read proc result")
 	}
 
@@ -46,15 +49,19 @@ func CalculateMultiplyByWorker(matrix [][]int, vector []int, line, n, m int, cur
 }
 
 func handleWorker(matrix [][]int, vector []int, line, n, m int, rawAddr string) error {
-	if _, err := os.Create(rawAddr); err != nil {
-		return fmt.Errorf("failed to create UNIX sock: %v", err)
-	}
-	defer os.RemoveAll(rawAddr)
-
 	addr, err := net.ResolveUnixAddr("unix", rawAddr)
 	if err != nil {
 		return fmt.Errorf("failed to resolve UNIX addr: %v", err)
 	}
+
+	clean := func() {
+		if err := os.RemoveAll(rawAddr); err != nil {
+			log.Println("Error remove all: ", err)
+		}
+	}
+
+	clean()
+	defer clean()
 
 	ls, err := net.ListenUnix("unix", addr)
 	if err != nil {

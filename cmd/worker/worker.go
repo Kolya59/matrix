@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 
@@ -13,20 +13,20 @@ import (
 
 func main() {
 	args := os.Args
-	if len(args) != 1 {
-		os.Exit(1)
+	if len(args) != 2 {
+		log.Fatalf("invalid args: %v", args)
 	}
 
-	rawAddr := args[0]
+	rawAddr := args[1]
 
 	addr, err := net.ResolveUnixAddr("unix", rawAddr)
 	if err != nil {
-		os.Exit(1)
+		log.Fatalf("failed to resolve unix addr: %v", err)
 	}
 
 	conn, err := net.DialUnix("unix", nil, addr)
 	if err != nil {
-		os.Exit(1)
+		log.Fatalf("failed to dial: %v", err)
 	}
 	defer func() {
 		_ = conn.Close()
@@ -34,12 +34,12 @@ func main() {
 
 	data, err := ioutil.ReadAll(conn)
 	if err != nil {
-		os.Exit(1)
+		log.Fatalf("failed to read from conn: %v", err)
 	}
 
 	var workerData worker.Worker
-	if err := json.Unmarshal(data, workerData); err != nil {
-		os.Exit(1)
+	if err := json.Unmarshal(data, &workerData); err != nil {
+		log.Fatalf("failed to unmarshal data: %v", err)
 	}
 
 	result := 0
@@ -47,8 +47,5 @@ func main() {
 		result += workerData.Matrix[workerData.Line][i] * workerData.Vector[i]
 	}
 
-	writer := bufio.NewWriter(os.Stdout)
-	if _, err = writer.WriteString(fmt.Sprintf("%d", result)); err != nil {
-		os.Exit(1)
-	}
+	fmt.Print(result)
 }
