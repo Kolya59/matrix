@@ -2,13 +2,14 @@ package worker
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
+
+	"github.com/kolya59/matrix/pkg/channels"
 )
 
 const (
@@ -23,40 +24,43 @@ type Worker struct {
 	Line    int     `json:"line"`
 }
 
-func CalculateMultiplyByWorker(matrix [][]int, vector []int, line, n, m int, currDir string) (int, error) {
+func CalculateMultiplyByWorker(matrix [][]int, vector []int, line, n, m int, currDir string, chGroup *channels.ChanGroups) {
 	addr := fmt.Sprintf("%s/socket/%d", currDir, line)
-	go func() {
-		if err := handleWorker(matrix, vector, line, n, m, addr); err != nil {
-			log.Fatal("Failed to handle worker: ", err)
-		}
-	}()
+	go handleWorker(matrix, vector, line, n, m, addr, chGroup)
 	cmd := exec.Command(fmt.Sprintf(`%s/%s`, currDir, workerPath), addr)
 
 	resultBytes, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return 0, fmt.Errorf("error from worker: %s", exitErr.Stderr)
+			chGroup.Errors <- fmt.Errorf("error from worker %d: %s", line, exitErr.Stderr)
+			return
 		}
-		return 0, errors.New("failed to read proc result")
+		chGroup.Errors <- fmt.Errorf("failed to read worker %d result: %s", line, err)
+		return
 	}
 
 	result, err := strconv.Atoi(string(resultBytes))
 	if err != nil {
-		return 0, errors.New("failed to convert result")
+		chGroup.Errors <- fmt.Errorf("failed to convert worker %d result: %s", line, err)
+		return
 	}
 
-	return result, nil
+	chGroup.Results <- channels.Result{
+		WorkerNumber: line,
+		Value:        result,
+	}
 }
 
-func handleWorker(matrix [][]int, vector []int, line, n, m int, rawAddr string) error {
+func handleWorker(matrix [][]int, vector []int, line, n, m int, rawAddr string, chGroup *channels.ChanGroups) {
 	addr, err := net.ResolveUnixAddr("unix", rawAddr)
 	if err != nil {
-		return fmt.Errorf("failed to resolve UNIX addr: %v", err)
+		chGroup.Errors <- fmt.Errorf("failed to resolve UNIX addr for worker %d: %v", line, err)
+		return
 	}
 
 	clean := func() {
 		if err := os.RemoveAll(rawAddr); err != nil {
-			log.Println("Error remove all: ", err)
+			chGroup.Errors <- fmt.Errorf("failed to remove sock for worker %d: %v", line, err)
 		}
 	}
 
@@ -65,17 +69,19 @@ func handleWorker(matrix [][]int, vector []int, line, n, m int, rawAddr string) 
 
 	ls, err := net.ListenUnix("unix", addr)
 	if err != nil {
-		return fmt.Errorf("failed to start listen: %v", err)
+		chGroup.Errors <- fmt.Errorf("failed to start listen for worker %d: %v", line, err)
+		return
 	}
 	defer func() {
 		if err := ls.Close(); err != nil {
-			log.Println("Failed to close connection: ", err)
+			chGroup.Errors <- fmt.Errorf("failed to close conn for worker %d: %v", line, err)
 		}
 	}()
 
 	conn, err := ls.Accept()
 	if err != nil {
-		return fmt.Errorf("failed to accept conn: %v", err)
+		chGroup.Errors <- fmt.Errorf("failed to accept conn for worker %d: %v", line, err)
+		return
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -93,12 +99,14 @@ func handleWorker(matrix [][]int, vector []int, line, n, m int, rawAddr string) 
 
 	data, err := json.Marshal(workerStruct)
 	if err != nil {
-		return fmt.Errorf("failed to marshal data: %v", err)
+		chGroup.Errors <- fmt.Errorf("failed to marshal data for worker %d: %v", line, err)
+		return
 	}
 
 	if _, err := conn.Write(data); err != nil {
-		return fmt.Errorf("failed to write data: %v", err)
+		chGroup.Errors <- fmt.Errorf("failed to write data for worker %d: %v", line, err)
+		return
 	}
 
-	return nil
+	return
 }
